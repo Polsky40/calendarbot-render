@@ -55,21 +55,31 @@ def get_eventos():
                 if 'T' in start_str:
                     dt_start = datetime.datetime.fromisoformat(start_str.replace('Z', '+00:00')).astimezone(zona_local)
                     dt_end = datetime.datetime.fromisoformat(end_str.replace('Z', '+00:00')).astimezone(zona_local)
-                    hora_inicio = dt_start.strftime('%H:%M')
-                    hora_fin = dt_end.strftime('%H:%M')
-                    duracion_min = int((dt_end - dt_start).total_seconds() // 60)
                 else:
-                    hora_inicio = hora_fin = ''
-                    duracion_min = None
                     dt_start = datetime.datetime.fromisoformat(start_str + "T00:00:00").astimezone(zona_local)
+                    dt_end = datetime.datetime.fromisoformat(end_str + "T00:00:00").astimezone(zona_local)
+
+                hora_inicio = dt_start.strftime('%H:%M')
+                hora_fin = dt_end.strftime('%H:%M')
+                duracion_min = int((dt_end - dt_start).total_seconds() // 60)
+                fecha = dt_start.strftime('%d/%m')
+                dia_semana = dt_start.strftime('%A')
+
+                descripcion = event.get('summary', 'Sin título').lower()
+                instrumento = next((i for i in ["piano", "guitarra", "bajo", "batería", "violín", "canto", "armónica", "acordeón", "iniciación", "cello", "ukelele"] if i in descripcion), "desconocido")
+                profe = next((p for p in ["sam", "andrés", "fede", "franco", "francou", "ceci", "sabri", "lorenzo", "tomás", "pablo", "valentín"] if p in descripcion), "desconocido")
+                alumno = descripcion
 
                 eventos_json.append({
-                    "calendario": nombre_cal,
-                    "fecha": dt_start.strftime('%A %d/%m'),
-                    "hora_inicio": hora_inicio,
-                    "hora_fin": hora_fin,
+                    "dia": dia_semana,
+                    "fecha": fecha,
+                    "sala": nombre_cal,
+                    "inicio": hora_inicio,
+                    "fin": hora_fin,
                     "duracion": duracion_min,
-                    "titulo": event.get('summary', 'Sin título'),
+                    "instrumento": instrumento,
+                    "profe": profe,
+                    "alumno": alumno
                 })
             except Exception as e:
                 print(f"Error procesando evento: {e}")
