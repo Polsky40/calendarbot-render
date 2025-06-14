@@ -67,7 +67,7 @@ def get_eventos():
 
                 descripcion = event.get('summary', 'Sin título').lower()
                 instrumento = next((i for i in ["piano", "iniciacion", "iniciación", "guitarra", "bajo", "batería", "violín", "canto", "armónica", "acordeón", "iniciación", "cello", "ukelele"] if i in descripcion), "desconocido")
-                profe = next((p for p in ["sam", "andrés", "fede", "franco", "francou", "ceci", "sabri", "lorenzo", "tomás", "pablo", "valentín"] if p in descripcion), "desconocido")
+                profe = next((p for p in ["sam", "andrés", "fede", "franco", "francou", "ceci", "sabri", "lorenzo", "tomás", "pablo", "tati"] if p in descripcion), "desconocido")
                 alumno = descripcion
 
                 eventos_json.append({
