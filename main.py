@@ -82,10 +82,29 @@ def buscar_huecos_disponibles(eventos_dia, duracion, hora_preferencia, profesor,
     disponibles = []
     preferida_dt = datetime.strptime(hora_preferencia, "%H:%M")
 
-    # Agrupar eventos por sala y profe
+    ventana_min = preferida_dt - timedelta(minutes=30)
+    ventana_max = preferida_dt + timedelta(minutes=30)
+
+    # Función para extraer los campos del título
+    def parse_titulo(titulo):
+        partes = [p.strip() for p in titulo.split("/")]
+        if len(partes) == 3:
+            instrumento, profe, alumno = partes
+        elif len(partes) == 2:
+            instrumento, profe = partes
+            alumno = ""
+        else:
+            instrumento = profe = alumno = titulo
+        return instrumento, profe, alumno
+
     por_sala_prof = {}
     for e in eventos_dia:
-        key = (e['calendario'], e['titulo'])  # sala, profesor
+        instrumento, profe, alumno = parse_titulo(e['titulo'])
+        e['instrumento'] = instrumento
+        e['profe'] = profe
+        e['alumno'] = alumno
+
+        key = (e['calendario'], profe)
         por_sala_prof.setdefault(key, []).append(e)
 
     for (sala_ev, prof_ev), evs in por_sala_prof.items():
@@ -103,29 +122,34 @@ def buscar_huecos_disponibles(eventos_dia, duracion, hora_preferencia, profesor,
             if delta >= duracion:
                 nuevo_inicio = hora_anterior
                 nuevo_fin = nuevo_inicio + timedelta(minutes=duracion)
-                if nuevo_inicio.time() == preferida_dt.time():
+
+                if ventana_min.time() <= nuevo_inicio.time() <= ventana_max.time():
                     disponibles.append({
                         "sala": sala_ev,
                         "profesor": prof_ev,
                         "hora_inicio": nuevo_inicio.strftime("%H:%M"),
-                        "hora_fin": nuevo_fin.strftime("%H:%M")
+                        "hora_fin": nuevo_fin.strftime("%H:%M"),
+                        "exacto": nuevo_inicio.time() == preferida_dt.time()
                     })
+
             hora_anterior = datetime.strptime(e['hora_fin'], "%H:%M")
 
-        # Revisa hueco final del día
+        # Revisión de hueco al final del día
         fin_jornada = datetime.strptime("21:00", "%H:%M")
         delta_final = (fin_jornada - hora_anterior).total_seconds() / 60
         if delta_final >= duracion:
             nuevo_inicio = hora_anterior
             nuevo_fin = nuevo_inicio + timedelta(minutes=duracion)
-            if nuevo_inicio.time() == preferida_dt.time():
+            if ventana_min.time() <= nuevo_inicio.time() <= ventana_max.time():
                 disponibles.append({
                     "sala": sala_ev,
                     "profesor": prof_ev,
                     "hora_inicio": nuevo_inicio.strftime("%H:%M"),
-                    "hora_fin": nuevo_fin.strftime("%H:%M")
+                    "hora_fin": nuevo_fin.strftime("%H:%M"),
+                    "exacto": nuevo_inicio.time() == preferida_dt.time()
                 })
 
+    disponibles.sort(key=lambda x: (not x['exacto'], x['hora_inicio']))
     return disponibles
 
 
