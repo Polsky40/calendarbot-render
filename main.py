@@ -1,28 +1,34 @@
-# app.py — ECM Agenda API (no-auth)
-# ---------------------------------
+# main.py — ECM Agenda API (no-auth, tolerante si faltan create/cancel)
 from fastapi import FastAPI, Query, Body, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 import datetime as dt
 import os
 
-# ---- Dependencias internas (asumidas existentes) ---------------------------
+# --- Importes base (deben existir) ------------------------------------------
 from calendar_utils import (
-    get_eventos,         # próximos N días normalizados
-    fetch_eventos,       # eventos entre datetimes (aware)
-    disponibilidad,      # calcula huecos con reglas del asistente
-    ZONA_LOCAL,          # pytz.timezone("America/Argentina/Buenos_Aires")
-    create_event,        # crea evento (respeta dry_run)
-    cancel_event,        # cancela por event_id
+    get_eventos,
+    fetch_eventos,
+    disponibilidad,
+    ZONA_LOCAL,   # pytz.timezone("America/Argentina/Buenos_Aires")
 )
 
+# --- Importes opcionales (pueden NO existir) --------------------------------
+try:
+    from calendar_utils import create_event as _create_event  # type: ignore
+    from calendar_utils import cancel_event as _cancel_event  # type: ignore
+    _HAS_WRITE_FUNCS = True
+except Exception:
+    _create_event = None
+    _cancel_event = None
+    _HAS_WRITE_FUNCS = False
+
 APP_TITLE = "ECM Agenda API (no-auth)"
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 
 app = FastAPI(title=APP_TITLE, version=APP_VERSION)
 
-# ---- CORS (útil si consumís desde front/browser) ---------------------------
-# Podés limitar orígenes con la env ECM_CORS_ORIGINS="https://midominio.com,https://otro.com"
+# ---- CORS (si consumís desde front) ----------------------------------------
 CORS_ORIGINS = [o.strip() for o in (os.environ.get("ECM_CORS_ORIGINS", "*")).split(",")]
 app.add_middleware(
     CORSMiddleware,
@@ -32,18 +38,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---- Controles de escritura (seguro sin key) --------------------------------
-# Por defecto NO se permiten escrituras reales.
+# ---- Controles de escritura -------------------------------------------------
 WRITE_ENABLED   = (os.environ.get("ECM_ALLOW_WRITE", "0") or "0").lower() in ("1", "true", "yes")
 DRY_RUN_DEFAULT = (os.environ.get("ECM_BOOK_DRY_RUN", "1") or "1").lower() in ("1", "true", "yes")
 
 # ---- Helpers ----------------------------------------------------------------
-def _parse_date_yyyy_mm_dd(s: str) -> dt.datetime:
-    """Convierte 'YYYY-MM-DD' a datetime aware en ZONA_LOCAL (inicio del día)."""
+def _parse_date(s: str) -> dt.datetime:
     try:
         return dt.datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=ZONA_LOCAL)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Fecha inválida '{s}'. Formato requerido YYYY-MM-DD") from e
+        raise HTTPException(status_code=400, detail=f"Fecha inválida '{s}'. Formato: YYYY-MM-DD") from e
 
 def _norm(s: Optional[str]) -> Optional[str]:
     return s.strip().lower() if isinstance(s, str) else None
@@ -55,7 +59,7 @@ def _validate_dur(d: Optional[int]) -> Optional[int]:
         raise HTTPException(status_code=400, detail="dur_min debe ser 30, 45 o 60")
     return d
 
-# ---- Raíz / Salud / Debug ---------------------------------------------------
+# ---- Salud / Debug ----------------------------------------------------------
 @app.get("/")
 def root():
     return {
@@ -65,6 +69,7 @@ def root():
         "endpoints": ["/agenda", "/availability", "/book", "/cancel", "/__whoami", "/healthz", "/__auth_debug"],
         "writes_enabled": WRITE_ENABLED,
         "dry_run_default": DRY_RUN_DEFAULT,
+        "has_write_funcs": _HAS_WRITE_FUNCS,
     }
 
 @app.get("/healthz")
@@ -73,8 +78,7 @@ def healthz():
 
 @app.get("/__whoami")
 def whoami():
-    """Diagnóstico: confirma el módulo que está corriendo en Render."""
-    return {"server_file": __file__, "writes_enabled": WRITE_ENABLED, "dry_run_default": DRY_RUN_DEFAULT}
+    return {"server_file": __file__, "writes_enabled": WRITE_ENABLED, "dry_run_default": DRY_RUN_DEFAULT, "has_write_funcs": _HAS_WRITE_FUNCS}
 
 @app.get("/__auth_debug")
 def __auth_debug(
@@ -82,8 +86,6 @@ def __auth_debug(
     x_api_key: Optional[str] = Header(None),
     valen: Optional[str] = Header(None),
 ):
-    """Diagnóstico de headers (para verificar que no haya auth activa)."""
-    # No usamos ECM_API_KEY en no-auth; sólo reportamos si alguien manda headers.
     return {
         "server_file": __file__,
         "has_authorization": bool(authorization),
@@ -99,18 +101,15 @@ def agenda(
     end:   Optional[str] = Query(None, description="YYYY-MM-DD"),
 ):
     if start and end:
-        d0 = _parse_date_yyyy_mm_dd(start)
-        d1 = _parse_date_yyyy_mm_dd(end)
-        # extendemos un día para incluir eventos del 'end' completo
+        d0 = _parse_date(start)
+        d1 = _parse_date(end)
         eventos = fetch_eventos(d0, d1 + dt.timedelta(days=1))
     else:
         eventos = get_eventos(dias=14)
 
-    # Orden por fecha, sala, hora de inicio
     try:
         eventos.sort(key=lambda e: (e["fecha"], e["sala"], e["start_local"]))
     except Exception:
-        # Si por alguna razón faltan claves, no fallamos
         pass
     return eventos
 
@@ -126,12 +125,11 @@ def availability(
     window_start: str = Query("14:00"),
     window_end:   str = Query("21:00"),
 ):
-    d0 = _parse_date_yyyy_mm_dd(start)
-    d1 = _parse_date_yyyy_mm_dd(end)
+    d0 = _parse_date(start)
+    d1 = _parse_date(end)
     _validate_dur(dur_min)
 
     eventos = fetch_eventos(d0, d1 + dt.timedelta(days=1))
-
     resp = disponibilidad(
         eventos=eventos,
         start_date=start, end_date=end,
@@ -139,7 +137,6 @@ def availability(
         dur_min=dur_min, salas_csv=salas,
         window_start=window_start, window_end=window_end
     )
-    # Normalizamos orden si el util retorna lista dict compatible
     try:
         resp.sort(key=lambda e: (e["fecha"], e["sala"], e["start_local"]))
     except Exception:
@@ -150,11 +147,13 @@ def availability(
 @app.post("/book")
 def book(payload: dict = Body(...)):
     """
-    Crea una reserva. En modo sin auth, por defecto corre en dry_run.
-    Para habilitar escritura real, setea ECM_ALLOW_WRITE=1 en el entorno.
+    Crea una reserva. En no-auth corre en dry_run salvo que ECM_ALLOW_WRITE=1.
+    Si calendar_utils no expone create_event, responde 400 claro.
     """
+    if not _HAS_WRITE_FUNCS or _create_event is None:
+        raise HTTPException(status_code=400, detail="create_event no está disponible en el servidor (calendar_utils). Subí una versión que lo implemente o dejá /book deshabilitado.")
+
     try:
-        # Validaciones mínimas
         sala        = payload.get("sala")
         start_local = payload.get("start_local")
         end_local   = payload.get("end_local")
@@ -165,7 +164,7 @@ def book(payload: dict = Body(...)):
         if not WRITE_ENABLED:
             dry_run = True
 
-        res = create_event(
+        res = _create_event(
             sala=sala,
             start_local=start_local,
             end_local=end_local,
@@ -178,10 +177,9 @@ def book(payload: dict = Body(...)):
             dry_run=dry_run,
         )
 
-        # Normalizamos el status para dry_run
-        if dry_run and res.get("status") == "validated":
+        if dry_run and isinstance(res, dict) and res.get("status") == "validated":
             res["status"] = "validated_dry_run"
-        if not WRITE_ENABLED:
+        if not WRITE_ENABLED and isinstance(res, dict):
             res["note"] = "WRITE_DISABLED: Setea ECM_ALLOW_WRITE=1 para confirmar reservas reales."
         return res
     except HTTPException:
@@ -189,23 +187,22 @@ def book(payload: dict = Body(...)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-# ---- Cancelación (bloqueada por defecto en no-auth) -------------------------
+# ---- Cancelación ------------------------------------------------------------
 @app.post("/cancel")
 def cancel(payload: dict = Body(...)):
     """
-    Cancela una reserva por ID. Bloqueado por defecto al estar sin auth.
-    Habilitá ECM_ALLOW_WRITE=1 para permitir cancelaciones reales.
+    Cancela una reserva por ID. Requiere ECM_ALLOW_WRITE=1 y cancel_event disponible.
     """
     if not WRITE_ENABLED:
-        raise HTTPException(
-            status_code=400,
-            detail="Cancelación deshabilitada en modo sin llave. Setea ECM_ALLOW_WRITE=1 para habilitar.",
-        )
+        raise HTTPException(status_code=400, detail="Cancelación deshabilitada (ECM_ALLOW_WRITE=0).")
+    if not _HAS_WRITE_FUNCS or _cancel_event is None:
+        raise HTTPException(status_code=400, detail="cancel_event no está disponible en el servidor (calendar_utils).")
+
     try:
         event_id = payload.get("event_id")
         if not event_id:
             raise HTTPException(status_code=400, detail="Falta event_id")
-        return cancel_event(event_id=event_id, sala=payload.get("sala"))
+        return _cancel_event(event_id=event_id, sala=payload.get("sala"))
     except HTTPException:
         raise
     except Exception as e:
@@ -214,5 +211,4 @@ def cancel(payload: dict = Body(...)):
 # ---- Entry point local ------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
-    # Local: uvicorn app:app --reload
-    uvicorn.run("app:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), reload=True)
