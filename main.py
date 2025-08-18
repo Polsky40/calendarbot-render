@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from calendar_utils import get_eventos
 import datetime
 import pytz
@@ -37,6 +37,66 @@ def agenda():
 
     return {"agenda": "\n".join(lines)}
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+@app.get("/buscar_horario")
+def buscar_horario(
+    duracion: int = Query(..., ge=30, le=60),
+    hora_preferencia: str = "18:30",
+    profesor: str = None,
+    sala: str = None
+):
+    eventos = get_eventos()
+    hoy = datetime.datetime.now(zona_local)
+    lunes = hoy - datetime.timedelta(days=hoy.weekday())
+    domingo = lunes + datetime.timedelta(days=13)
+
+    agenda_por_dia = {}
+    for e in eventos:
+        if not (e['hora_inicio'] and e['hora_fin']):
+            continue
+        dia = e['fecha']
+        agenda_por_dia.setdefault(dia, []).append(e)
+
+    resultados = []
+
+    for dia, eventos_dia in agenda_por_dia.items():
+        disponibles = buscar_huecos_disponibles(
+            eventos_dia,
+            duracion,
+            hora_preferencia,
+            profesor,
+            sala
+        )
+        if disponibles:
+            resultados.append({
+                "fecha": dia,
+                "opciones": disponibles
+            })
+
+    return {"resultados": resultados}
+
+
+def buscar_huecos_disponibles(eventos_dia, duracion, hora_preferencia, profesor, sala):
+    from datetime import datetime, timedelta
+
+    disponibles = []
+    preferida_dt = datetime.strptime(hora_preferencia, "%H:%M")
+
+    # Agrupar eventos por sala y profe
+    por_sala_prof = {}
+    for e in eventos_dia:
+        key = (e['calendario'], e['titulo'])  # sala, profesor
+        por_sala_prof.setdefault(key, []).append(e)
+
+    for (sala_ev, prof_ev), evs in por_sala_prof.items():
+        if sala and sala.lower() != sala_ev.lower():
+            continue
+        if profesor and profesor.lower() not in prof_ev.lower():
+            continue
+
+        evs_ordenados = sorted(evs, key=lambda x: x['hora_inicio'])
+        hora_anterior = datetime.strptime("08:00", "%H:%M")
+
+        for e in evs_ordenados:
+            inicio = datetime.strptime(e['hora_inicio'], "%H:%M")
+            delta
