@@ -1,59 +1,67 @@
-import datetime
-import pytz
+import json
+import os
+from datetime import datetime, timedelta
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-SERVICE_ACCOUNT_FILE = 'service_account.json'
-zona_local = pytz.timezone("America/Argentina/Buenos_Aires")
+SERVICE_ACCOUNT_INFO = json.loads(os.environ['GOOGLE_CREDENTIALS_JSON'])
 
-CALENDAR_IDS = {
-    "Sala grande": "dq9te3mprqg1ljp5tnjpb8v6ns@group.calendar.google.com",
-    "Sala piano": "4lagj76akl5n37gejf030qv3do@group.calendar.google.com",
-    "Sala picola": "mpncunafqtkig51qm35rs84t28@group.calendar.google.com",
-    "Sala terraza": "adso7d591imkgl4s1e7vom5npk@group.calendar.google.com",
+creds = service_account.Credentials.from_service_account_info(
+    SERVICE_ACCOUNT_INFO, scopes=SCOPES
+)
+
+service = build('calendar', 'v3', credentials=creds)
+
+# Lista de calendarios a consultar
+CALENDARIOS = {
+    "Piano": "piano@ecmusica.com",
+    "Batería": "bateria@ecmusica.com",
+    "Guitarra": "guitarra@ecmusica.com",
+    "Sala grande": "salagrande@ecmusica.com",
+    # Agregá los que quieras
 }
 
 def get_eventos():
-    creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-    service = build('calendar', 'v3', credentials=creds)
+    ahora = datetime.utcnow().isoformat() + 'Z'
+    fin = (datetime.utcnow() + timedelta(days=14)).isoformat() + 'Z'
+    eventos_todos = []
 
-    hoy = datetime.datetime.now(zona_local)
-    inicio = hoy.replace(hour=0, minute=0, second=0, microsecond=0)
-    fin = inicio + datetime.timedelta(days=14)
-    time_min = inicio.astimezone(pytz.utc).isoformat()
-    time_max = fin.astimezone(pytz.utc).isoformat()
+    for nombre, calendario_id in CALENDARIOS.items():
+        eventos = (
+            service.events()
+            .list(calendarId=calendario_id, timeMin=ahora, timeMax=fin, singleEvents=True, orderBy='startTime')
+            .execute()
+            .get('items', [])
+        )
 
-    eventos_json = []
-    for nombre_cal, cal_id in CALENDAR_IDS.items():
-        eventos = service.events().list(
-            calendarId=cal_id,
-            timeMin=time_min,
-            timeMax=time_max,
-            singleEvents=True,
-            orderBy='startTime'
-        ).execute().get('items', [])
+        for evento in eventos:
+            inicio = evento['start'].get('dateTime', evento['start'].get('date'))
+            fin_ = evento['end'].get('dateTime', evento['end'].get('date'))
 
-        for event in eventos:
-            start_str = event['start'].get('dateTime', event['start'].get('date'))
-            end_str = event['end'].get('dateTime', event['end'].get('date'))
-            if 'T' in start_str:
-                dt_start = datetime.datetime.fromisoformat(start_str.replace('Z', '+00:00')).astimezone(zona_local)
-                dt_end = datetime.datetime.fromisoformat(end_str.replace('Z', '+00:00')).astimezone(zona_local)
-                hora_inicio = dt_start.strftime('%H:%M')
-                hora_fin = dt_end.strftime('%H:%M')
-                duracion_min = int((dt_end - dt_start).total_seconds() // 60)
-            else:
-                hora_inicio = hora_fin = ''
-                duracion_min = None
-                dt_start = datetime.datetime.fromisoformat(start_str + "T00:00:00").astimezone(zona_local)
+            try:
+                hora_inicio = datetime.fromisoformat(inicio)
+                hora_fin = datetime.fromisoformat(fin_)
+                duracion = int((hora_fin - hora_inicio).total_seconds() / 60)
+                fecha = hora_inicio.strftime('%Y-%m-%d')
+                evento_obj = {
+                    "fecha": fecha,
+                    "hora_inicio": hora_inicio.strftime('%H:%M'),
+                    "hora_fin": hora_fin.strftime('%H:%M'),
+                    "titulo": evento.get('summary', 'Sin título'),
+                    "calendario": nombre,
+                    "duracion": duracion
+                }
+            except Exception as e:
+                evento_obj = {
+                    "fecha": inicio,
+                    "hora_inicio": None,
+                    "hora_fin": None,
+                    "titulo": evento.get('summary', 'Sin título'),
+                    "calendario": nombre,
+                    "duracion": None
+                }
 
-            eventos_json.append({
-                "calendario": nombre_cal,
-                "fecha": dt_start.strftime('%A %d/%m'),
-                "hora_inicio": hora_inicio,
-                "hora_fin": hora_fin,
-                "duracion": duracion_min,
-                "titulo": event.get('summary', 'Sin título'),
-            })
-    return eventos_json
+            eventos_todos.append(evento_obj)
+
+    return eventos_todos
