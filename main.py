@@ -99,4 +99,36 @@ def buscar_huecos_disponibles(eventos_dia, duracion, hora_preferencia, profesor,
 
         for e in evs_ordenados:
             inicio = datetime.strptime(e['hora_inicio'], "%H:%M")
-            delta
+            delta = (inicio - hora_anterior).total_seconds() / 60
+            if delta >= duracion:
+                nuevo_inicio = hora_anterior
+                nuevo_fin = nuevo_inicio + timedelta(minutes=duracion)
+                if nuevo_inicio.time() == preferida_dt.time():
+                    disponibles.append({
+                        "sala": sala_ev,
+                        "profesor": prof_ev,
+                        "hora_inicio": nuevo_inicio.strftime("%H:%M"),
+                        "hora_fin": nuevo_fin.strftime("%H:%M")
+                    })
+            hora_anterior = datetime.strptime(e['hora_fin'], "%H:%M")
+
+        # Revisa hueco final del día
+        fin_jornada = datetime.strptime("21:00", "%H:%M")
+        delta_final = (fin_jornada - hora_anterior).total_seconds() / 60
+        if delta_final >= duracion:
+            nuevo_inicio = hora_anterior
+            nuevo_fin = nuevo_inicio + timedelta(minutes=duracion)
+            if nuevo_inicio.time() == preferida_dt.time():
+                disponibles.append({
+                    "sala": sala_ev,
+                    "profesor": prof_ev,
+                    "hora_inicio": nuevo_inicio.strftime("%H:%M"),
+                    "hora_fin": nuevo_fin.strftime("%H:%M")
+                })
+
+    return disponibles
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
