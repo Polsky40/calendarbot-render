@@ -1,10 +1,11 @@
+import os
+import json
 import datetime
 import pytz
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-SERVICE_ACCOUNT_FILE = 'service_account.json'
 zona_local = pytz.timezone("America/Argentina/Buenos_Aires")
 
 CALENDAR_IDS = {
@@ -15,7 +16,8 @@ CALENDAR_IDS = {
 }
 
 def get_eventos():
-    creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+    SERVICE_ACCOUNT_INFO = json.loads(os.environ["GOOGLE_CREDENTIALS_JSON"])
+    creds = service_account.Credentials.from_service_account_info(SERVICE_ACCOUNT_INFO, scopes=SCOPES)
     service = build('calendar', 'v3', credentials=creds)
 
     hoy = datetime.datetime.now(zona_local)
@@ -56,4 +58,5 @@ def get_eventos():
                 "duracion": duracion_min,
                 "titulo": event.get('summary', 'Sin título'),
             })
+
     return eventos_json
